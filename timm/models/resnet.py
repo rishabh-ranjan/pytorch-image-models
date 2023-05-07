@@ -62,7 +62,7 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
 
         assert cardinality == 1, 'BasicBlock only supports cardinality of 1'
-        assert base_width == 64, 'BasicBlock does not support changing base width'
+        # assert base_width == 64, 'BasicBlock does not support changing base width'
         first_planes = planes // reduce_first
         outplanes = planes * self.expansion
         first_dilation = first_dilation or dilation
@@ -141,7 +141,7 @@ class Bottleneck(nn.Module):
     ):
         super(Bottleneck, self).__init__()
 
-        width = int(math.floor(planes * (base_width / 64)) * cardinality)
+        width = max(int(math.floor(planes * (base_width / 64)) * cardinality), 1)
         first_planes = width // reduce_first
         outplanes = planes * self.expansion
         first_dilation = first_dilation or dilation
@@ -365,6 +365,7 @@ class ResNet(nn.Module):
             cardinality=1,
             base_width=64,
             stem_width=64,
+            width_factor=64,
             stem_type='',
             replace_stem_pool=False,
             block_reduce_first=1,
@@ -410,6 +411,10 @@ class ResNet(nn.Module):
             block_args (dict): Extra kwargs to pass through to block module
         """
         super(ResNet, self).__init__()
+
+        base_width = max(base_width * width_factor // 64, 1)
+        stem_width = max(stem_width * width_factor // 64, 1)
+
         block_args = block_args or dict()
         assert output_stride in (8, 16, 32)
         self.num_classes = num_classes
@@ -425,7 +430,7 @@ class ResNet(nn.Module):
         if deep_stem:
             stem_chs = (stem_width, stem_width)
             if 'tiered' in stem_type:
-                stem_chs = (3 * (stem_width // 4), stem_width)
+                stem_chs = (max(3 * (stem_width // 4), 1), stem_width)
             self.conv1 = nn.Sequential(*[
                 nn.Conv2d(in_chans, stem_chs[0], 3, stride=2, padding=1, bias=False),
                 norm_layer(stem_chs[0]),
@@ -460,7 +465,7 @@ class ResNet(nn.Module):
                 self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         # Feature Blocks
-        channels = [64, 128, 256, 512]
+        channels = [width_factor * 1, width_factor * 2, width_factor * 4, width_factor * 8]
         stage_modules, stage_feature_info = make_blocks(
             block,
             channels,
@@ -484,7 +489,7 @@ class ResNet(nn.Module):
         self.feature_info.extend(stage_feature_info)
 
         # Head (Pooling and Classifier)
-        self.num_features = 512 * block.expansion
+        self.num_features = 8 * width_factor * block.expansion
         self.global_pool, self.fc = create_classifier(self.num_features, self.num_classes, pool_type=global_pool)
 
         self.init_weights(zero_init_last=zero_init_last)
